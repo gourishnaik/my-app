@@ -1,0 +1,221 @@
+NEST.JS PROJECT — HOW IT WORKS
+================================
+
+This is the default NestJS starter app. It's a minimal REST server with one
+route ("/") that returns "Hello World!". Below is a plain-English walkthrough
+of each file and how they connect.
+
+
+1. src/main.ts — Entry point
+-----------------------------
+This is the file that actually runs when you start the app (npm run start).
+
+    const app = await NestFactory.create(AppModule);
+    await app.listen(process.env.PORT ?? 3000);
+
+- NestFactory.create(AppModule) builds the whole application from the root
+  module (AppModule) — it reads that module's config and wires up every
+  controller and service declared inside it.
+- app.listen(...) starts the HTTP server (Express, by default) on the given
+  port. It uses the PORT environment variable if set, otherwise defaults to
+  3000. This is what lets you run the same code on different ports in
+  different environments (local dev vs. hosting platform).
+
+
+2. src/app.module.ts — Root module
+------------------------------------
+    @Module({
+      imports: [],
+      controllers: [AppController],
+      providers: [AppService],
+    })
+    export class AppModule {}
+
+A "module" is Nest's way of organizing related code into a unit. Every Nest
+app needs at least one — the root module — as its starting point.
+
+- imports: other modules this module depends on (empty for now — there's
+  only one module in this small app).
+- controllers: classes that handle incoming HTTP requests (routing).
+- providers: classes that contain business logic/services, which Nest can
+  inject into controllers automatically (dependency injection, or "DI").
+
+As the app grows, you'd typically create one module per feature (e.g.
+UsersModule, AuthModule) and import them here.
+
+
+3. src/app.controller.ts — Handles HTTP requests
+---------------------------------------------------
+    @Controller()
+    export class AppController {
+      constructor(private readonly appService: AppService) {}
+
+      @Get()
+      getHello(): string {
+        return this.appService.getHello();
+      }
+    }
+
+- @Controller() with no path means this controller handles requests to the
+  root URL "/". (You could write @Controller('cats') to handle "/cats".)
+- The constructor takes an AppService parameter. Nest sees this and
+  automatically creates/injects an AppService instance for you — you never
+  call "new AppService()" yourself. This is dependency injection.
+- @Get() marks getHello() as the handler for GET requests to "/". When a
+  browser hits http://localhost:3000/, this method runs.
+- Note the controller doesn't contain the actual logic — it just calls
+  appService.getHello() and returns the result. This is intentional:
+  controllers should stay "thin" (just routing), and business logic should
+  live in services.
+
+
+4. src/app.service.ts — Business logic
+------------------------------------------
+    @Injectable()
+    export class AppService {
+      getHello(): string {
+        return 'Hello World!';
+      }
+    }
+
+- @Injectable() marks this class as something Nest's DI system can manage
+  and hand out to whoever asks for it (like AppController did above).
+- getHello() is the actual logic — here it's trivial (just returns a
+  string), but in a real app this is where you'd put database calls,
+  calculations, calls to other services, etc.
+
+
+5. src/app.controller.spec.ts — Unit test
+----------------------------------------------
+    const app: TestingModule = await Test.createTestingModule({
+      controllers: [AppController],
+      providers: [AppService],
+    }).compile();
+
+    appController = app.get<AppController>(AppController);
+
+- This builds a fake, lightweight version of the module (no real HTTP
+  server) just for testing.
+- It then grabs a fully wired AppController (with a real AppService
+  injected) and tests that calling getHello() returns "Hello World!".
+- You could replace "providers: [AppService]" with a mock/fake service to
+  isolate the controller from real logic during testing.
+
+
+WHAT IS A CONTROLLER? (in depth)
+------------------------------------
+A controller is a class whose job is to receive incoming HTTP requests and
+send back a response. That's it — routing in, response out. Nothing else
+should live here.
+
+Think of it as the "front door" of a feature: when a request arrives for
+a given URL + HTTP method, Nest looks at which controller/method is
+registered for that combination and calls it.
+
+WHY IT EXISTS
+  Without controllers, you'd have to manually parse the URL, check the
+  HTTP method, read the body, and call the right function yourself (like
+  raw Node's http.createServer does). Nest's @Controller()/@Get()/@Post()
+  decorators do all of that wiring for you — you just declare which
+  method should run for which route.
+
+HOW YOU DECLARE ONE
+    @Controller('cats')          // base path: everything below is under /cats
+    export class CatsController {
+      constructor(private readonly catsService: CatsService) {}
+
+      @Get()                     // GET /cats
+      findAll() {
+        return this.catsService.findAll();
+      }
+
+      @Get(':id')                // GET /cats/3
+      findOne(@Param('id') id: string) {
+        return this.catsService.findOne(id);
+      }
+
+      @Post()                    // POST /cats
+      create(@Body() dto: CreateCatDto) {
+        return this.catsService.create(dto);
+      }
+
+      @Put(':id')                // PUT /cats/3
+      update(@Param('id') id: string, @Body() dto: UpdateCatDto) {
+        return this.catsService.update(id, dto);
+      }
+
+      @Delete(':id')             // DELETE /cats/3
+      remove(@Param('id') id: string) {
+        return this.catsService.remove(id);
+      }
+    }
+
+THE PIECES THAT MAKE IT WORK
+  @Controller('cats')   Marks the class as a controller and sets the base
+                         URL prefix. Combined with the method decorator
+                         below it, it forms the full route.
+  @Get() @Post() @Put()
+  @Delete() @Patch()    HTTP-method decorators. Nest maps the request's
+                         method + path to exactly one of these handlers.
+  @Param('id')          Pulls a value out of the URL itself (the ":id" in
+                         the route path).
+  @Body()                Pulls the parsed JSON request body and hands it
+                         to you as an object (validated against a DTO
+                         class if you use ValidationPipe).
+  @Query()               Pulls values from the URL's query string
+                         (?page=2&limit=10).
+  Return value           Whatever the method returns becomes the JSON
+                         response body automatically — no manual
+                         res.send() needed (Nest handles that under the
+                         hood using the underlying Express/Fastify
+                         response object).
+
+HOW IT'S ACTUALLY USED IN A REAL APP
+  1. A controller is declared inside a module's `controllers: [...]`
+     array (see app.module.ts above) so Nest knows to register its
+     routes at startup.
+  2. It depends on one or more services via constructor injection (e.g.
+     CatsService above) — the controller never talks to the database or
+     contains business rules directly.
+  3. Each public method with an HTTP-method decorator becomes one API
+     endpoint. A single controller commonly groups every endpoint for
+     one resource/domain (all "/cats" routes live in CatsController, all
+     "/users" routes live in UsersController, etc.) — this mirrors the
+     "one feature module per domain" structure described in
+     PROJECT_STRUCTURE.md.
+  4. Guards, pipes, interceptors, and filters can be attached to a
+     controller (or individual route) with decorators like
+     @UseGuards(AuthGuard), @UsePipes(ValidationPipe) — these run before/
+     after the handler and are how auth checks, input validation, and
+     response transformation get layered on without cluttering the
+     controller's own code.
+
+RULE OF THUMB
+  If you're tempted to write a database query, a calculation, or an
+  if/else business rule inside a controller method — stop, and move it
+  into a service instead. The controller's only job is: read the
+  request, call the service, return the result.
+
+
+HOW A REQUEST FLOWS THROUGH THE APP
+------------------------------------
+1. Browser/client sends GET http://localhost:3000/
+2. main.ts's Express server receives it.
+3. Nest routes it to AppController.getHello() because of @Controller() +
+   @Get().
+4. AppController calls appService.getHello() (the injected instance).
+5. AppService returns 'Hello World!'.
+6. AppController returns that string, which Nest sends back as the HTTP
+   response body.
+
+
+KEY NESTJS CONCEPTS TO REMEMBER
+--------------------------------
+- Module:      groups related controllers + providers together.
+- Controller:  defines routes/endpoints, handles HTTP request/response.
+- Provider/Service: holds business logic, injected wherever needed.
+- Dependency Injection (DI): Nest creates and hands you instances of
+  classes automatically based on constructor parameters — you don't
+  instantiate them with "new".
+- Decorators (@Module, @Controller, @Get, @Injectable): special
+  annotations that tell Nest how to treat a class or method.

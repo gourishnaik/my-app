@@ -1,0 +1,139 @@
+NEST.JS PROJECT — EXECUTION PIPELINE
+=======================================
+
+This explains, step by step, what actually runs and in what order when you
+start this app (e.g. "npm run start:dev"), and what happens after that when
+a request comes in.
+
+
+STEP 0 — You run a script
+---------------------------
+package.json defines these commands (see "scripts"):
+
+    start        -> nest start              (run once)
+    start:dev    -> nest start --watch      (auto-restarts on file changes)
+    start:debug  -> nest start --debug --watch
+    start:prod   -> node dist/main          (run compiled JS directly)
+    build        -> nest build              (compiles TypeScript to dist/)
+
+For development you'd normally run: npm run start:dev
+This uses the Nest CLI, which compiles your TypeScript on the fly (using
+ts-loader, as configured in nest-cli.json) and runs the result.
+
+For production you'd run: npm run build  then  npm run start:prod
+This compiles src/*.ts into dist/*.js first, then runs plain Node on the
+compiled output — no on-the-fly compilation, so it starts faster.
+
+Either way, the file that actually gets executed first is:
+
+    src/main.ts   (or its compiled version, dist/main.js)
+
+This is the single entry point of the whole application — nothing runs
+before it.
+
+
+STEP 1 — main.ts runs (bootstrap)
+------------------------------------
+    async function bootstrap() {
+      const app = await NestFactory.create(AppModule);
+      await app.listen(process.env.PORT ?? 3000);
+    }
+    bootstrap();
+
+Order of execution inside this file:
+
+  1. Import NestFactory and AppModule.
+  2. Call NestFactory.create(AppModule).
+     This is where Nest reads AppModule and recursively builds the entire
+     application:
+       a. It looks at AppModule's "imports" array — if there were other
+          modules, Nest would process each of them first (recursively),
+          building up their own controllers/providers.
+       b. It registers every provider listed in "providers" (here:
+          AppService) into Nest's dependency-injection (DI) container.
+       c. It registers every controller listed in "controllers" (here:
+          AppController), and instantiates it — Nest sees AppController's
+          constructor needs an AppService, looks it up in the DI container
+          (already created in step b), and injects it automatically.
+       d. Internally, Nest also sets up the underlying HTTP framework
+          (Express, by default, via @nestjs/platform-express) and maps
+          each @Get()/@Post()/etc. decorated method to a real HTTP route.
+  3. Call app.listen(port).
+     This starts the actual HTTP server and makes it start accepting
+     network connections on the given port (3000 by default, or the PORT
+     environment variable if set).
+
+At this point the app is "up" — Nest has finished wiring everything and is
+now just waiting for incoming HTTP requests.
+
+
+BUILD-TIME ORDER (which files Nest reads to build the app)
+--------------------------------------------------------------
+Even though only main.ts is "run" first, Nest needs to read/import a chain
+of files to construct the app object:
+
+    main.ts
+      -> imports AppModule (src/app.module.ts)
+           -> AppModule's controllers: [AppController]
+                -> src/app.controller.ts is loaded
+                     -> which imports AppService (src/app.service.ts)
+           -> AppModule's providers: [AppService]
+                -> src/app.service.ts is loaded
+
+So logically:
+    main.ts  →  app.module.ts  →  app.controller.ts + app.service.ts
+
+This is why AppModule is called the "root" — everything else hangs off it.
+
+
+STEP 2 — A request comes in (runtime, per-request pipeline)
+-----------------------------------------------------------------
+Once the server is listening, here's what happens for, say, a browser
+hitting: GET http://localhost:3000/
+
+  1. Express (the underlying HTTP server) receives the raw HTTP request.
+  2. Nest's routing layer matches the URL + HTTP method against registered
+     routes. "/" + GET matches AppController.getHello() because of:
+         @Controller()   -> base path ""
+         @Get()           -> matches GET requests to that base path
+  3. (In a bigger app, this is also where Nest would run, in order:
+         Middleware -> Guards -> Interceptors (pre) -> Pipes -> Route Handler
+         -> Interceptors (post) -> Exception Filters (if error thrown)
+     This starter project doesn't define any of those extras, so the
+     request goes almost straight to the handler.)
+  4. AppController.getHello() runs. It calls this.appService.getHello()
+     (the AppService instance that was injected back in Step 1).
+  5. AppService.getHello() runs its logic and returns a string
+     (e.g. "Hello World!").
+  6. AppController returns that value back to Nest.
+  7. Nest serializes it into an HTTP response and Express sends it back to
+     the browser.
+
+
+FULL REQUEST PIPELINE (general Nest.js order, for reference)
+------------------------------------------------------------------
+For any Nest app (this one or a bigger one), an incoming request is
+processed in this order:
+
+    1. Middleware        (e.g. logging, cors — runs before routing)
+    2. Guards             (e.g. auth checks — can block the request)
+    3. Interceptors (before) (e.g. transform request, start a timer)
+    4. Pipes               (e.g. validation, transforming route params/body)
+    5. Route Handler        (your controller method — the actual logic call)
+    6. Interceptors (after)  (e.g. transform response, logging)
+    7. Exception Filters     (only if something threw an error anywhere above)
+
+This project currently only uses step 5 (a plain route handler calling a
+service) — no middleware/guards/pipes/interceptors are defined yet.
+
+
+SUMMARY — "WHAT RUNS FIRST"
+------------------------------
+1. npm script runs "nest start" (or "node dist/main" in prod).
+2. src/main.ts executes — this is the true entry point.
+3. Inside it, NestFactory.create(AppModule) builds the whole app by reading
+   app.module.ts, which pulls in app.controller.ts and app.service.ts.
+4. app.listen(port) starts the HTTP server.
+5. From then on, every incoming HTTP request goes through Nest's request
+   pipeline (middleware -> guards -> interceptors -> pipes -> handler) and
+   is routed to the matching controller method, which calls the service.

@@ -1,0 +1,180 @@
+NESTJS vs ANGULAR — FRAMEWORK-LEVEL COMPARISON
+==============================================
+
+theory/06-decorators.txt already compares their DECORATORS side by side.
+This file zooms out one level: WHY do they feel so similar, WHERE do
+they actually run, and what does the SAME feature look like end-to-end
+in each?
+
+    Angular  -> runs in the BROWSER.  Job: render UI, manage user
+                interaction, call a backend API for data.
+    NestJS   -> runs on the SERVER.   Job: expose an HTTP API, run
+                business logic, talk to a database.
+
+They are not competitors — a real product commonly uses BOTH together:
+an Angular frontend calling a NestJS backend over HTTP.
+
+
+WHY THEY FEEL SO ALIKE (THIS IS DELIBERATE, NOT A COINCIDENCE)
+--------------------------------------------------------------------
+NestJS was explicitly designed by its creator to bring Angular's
+architecture — modules, decorators, dependency injection — to the
+backend, because that architecture had already proven itself at scale
+on the frontend. Both are built in TypeScript, both use the same
+"reflect-metadata" decorator mechanism under the hood, and both
+organize code the same structural way: everything is a decorated class,
+grouped into modules, wired together by a DI container.
+
+
+HIGH-LEVEL COMPARISON TABLE
+--------------------------------
+  |                        | Angular                          | NestJS                              |
+  |------------------------|------------------------------------|---------------------------------------|
+  | Runs where              | Browser (client-side)              | Server (Node.js)                     |
+  | Core job                 | Render UI, handle user events      | Handle HTTP requests, run business   |
+  |                          |                                     | logic, return data                   |
+  | "Building block"         | @Component (has a template/HTML)   | @Controller (has NO template — just  |
+  |                          |                                     | returns data, usually JSON)          |
+  | Grouping unit             | @NgModule                          | @Module                              |
+  | Injectable class          | @Injectable({ providedIn: 'root' })| @Injectable()                        |
+  | Routing purpose            | Maps a URL to a COMPONENT (a page  | Maps a URL + HTTP method to a        |
+  |                          | to render)                          | HANDLER METHOD (data to return)      |
+  | Data flow                 | Parent -> child via @Input(),      | Client -> server via @Body()/        |
+  |                          | child -> parent via @Output()       | @Param()/@Query(); response is the   |
+  |                          |                                     | method's return value                |
+  | Has a "render" step?      | Yes — change detection re-renders   | No — no DOM, no templates, ever      |
+  |                          | the DOM when data changes          |                                       |
+  | CLI                        | `ng generate component/service`    | `nest generate controller/service`   |
+  | Talks to a database?       | Never directly — always through an | Yes, directly (ORM/repository)       |
+  |                          | HTTP call to a backend             |                                       |
+  | Typical unit tested with   | Jasmine/Karma (historically),      | Jest (this project uses Jest — see   |
+  |                          | Jest increasingly common now        | package.json)                        |
+
+
+A COMPLETE EXAMPLE — THE SAME "CAT" FEATURE IN BOTH
+--------------------------------------------------------------
+ANGULAR (frontend — displays a list of cats fetched from an API):
+
+    // cats.service.ts
+    @Injectable({ providedIn: 'root' })
+    export class CatsService {
+      constructor(private http: HttpClient) {}
+
+      getCats(): Observable<Cat[]> {
+        return this.http.get<Cat[]>('/api/cats');   // calls a backend
+      }
+    }
+
+    // cats-list.component.ts
+    @Component({
+      selector: 'app-cats-list',
+      template: `<li *ngFor="let cat of cats">{{ cat.name }}</li>`,
+    })
+    export class CatsListComponent implements OnInit {
+      cats: Cat[] = [];
+      constructor(private catsService: CatsService) {}
+
+      ngOnInit() {
+        this.catsService.getCats().subscribe((cats) => (this.cats = cats));
+      }
+    }
+
+    // cats.module.ts
+    @NgModule({
+      declarations: [CatsListComponent],
+      imports: [HttpClientModule],
+      providers: [CatsService],
+    })
+    export class CatsModule {}
+
+NESTJS (backend — exactly what /api/cats above is actually hitting):
+
+    // cats.service.ts
+    @Injectable()
+    export class CatsService {
+      private cats: Cat[] = [{ id: 1, name: 'Whiskers' }];
+
+      findAll(): Cat[] {
+        return this.cats;                            // no HTTP call — IS the data
+      }
+    }
+
+    // cats.controller.ts
+    @Controller('cats')
+    export class CatsController {
+      constructor(private readonly catsService: CatsService) {}
+
+      @Get()
+      findAll(): Cat[] {
+        return this.catsService.findAll();            // GET /api/cats -> JSON
+      }
+    }
+
+    // cats.module.ts
+    @Module({
+      controllers: [CatsController],
+      providers: [CatsService],
+    })
+    export class CatsModule {}
+
+Notice the PATTERN is nearly identical (a service holds the data/logic,
+a "front door" class exposes it, a module wires both together) — but
+the OUTPUT is completely different: Angular's CatsListComponent produces
+HTML the browser renders; Nest's CatsController produces JSON a browser
+(or Angular's CatsService) fetches.
+
+
+THE KEY MENTAL MODEL SHIFT
+------------------------------------
+  Angular @Component  = "here is a piece of UI, and how it behaves"
+  Nest @Controller     = "here is a piece of API, and what data it returns"
+
+Neither one ever does the OTHER's job:
+  - A Nest controller never returns HTML/templates — it returns data
+    (usually auto-serialized to JSON), full stop.
+  - An Angular component never talks to a database directly — it always
+    goes through HttpClient to a backend (Nest or otherwise).
+
+This is why Angular has @Input()/@Output() (passing data between
+UI pieces on screen) with no Nest equivalent, and why Nest has
+@Get()/@Post()/@Put()/@Delete() (mapping HTTP verbs to logic) with no
+Angular equivalent — each framework's decorators reflect what that
+layer of the stack actually needs to do. See theory/06-decorators.txt
+for the full decorator-by-decorator mapping.
+
+
+WHY LEARNING ONE MAKES THE OTHER EASIER
+------------------------------------------------
+If Angular is familiar already, the concepts that transfer directly:
+  - "Everything is a decorated class" — no relearning needed.
+  - "A module declares what's inside it and what it depends on" — same
+    mental model, `imports`/`providers` map almost 1:1.
+  - "Constructor injection = DI, the framework hands me my
+    dependencies" — identical mechanism, identical syntax
+    (`constructor(private readonly x: XService)`).
+  - "The CLI scaffolds boilerplate for you" — `ng generate` <-> `nest
+    generate` (see theory/01-module.txt, theory/03-service.txt for
+    this project's `nest g` examples).
+
+What has to be relearned:
+  - No templates, no DOM, no change detection, no @Input()/@Output() —
+    a Nest class's "output" is a return value, not a rendered view.
+  - Routing means something different: Angular routes decide WHICH PAGE
+    is shown; Nest routes decide WHICH FUNCTION runs and what data it
+    hands back.
+  - Nest talks to real infrastructure (databases, file systems, other
+    services) directly — Angular is sandboxed inside a browser and
+    can only reach the outside world through HTTP calls.
+
+
+RULE OF THUMB
+--------------
+Same skeleton (decorators + modules + DI), different organs. Angular's
+skeleton renders and reacts to a user in a browser; Nest's skeleton
+receives a request and returns data on a server. When something feels
+unfamiliar in Nest, ask "what would this be in Angular?" — the
+structural answer usually transfers; the content (UI vs data/logic)
+never does.
+
+See also: theory/06-decorators.txt, theory/01-module.txt,
+theory/03-service.txt, theory/07-dependency-injection.txt
