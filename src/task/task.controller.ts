@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, ParseIntPipe, Post, Put, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseIntPipe, Post, Put, UseFilters, UseGuards } from '@nestjs/common';
 import { TaskService } from './task.service';
 import type { Task } from './interfaces/task.interface';
 import { CreateTaskDto } from './dto/create-task.dto';
@@ -8,10 +8,11 @@ import { AuthGuard } from '../guards/auth/auth.guard';
 import { RolesGuard } from '../guards/roles/roles.guard';
 import { Roles } from '../guards/roles/roles.decorator';
 import { Role } from '../guards/roles/role.enum';
+import { HttpExceptionFilter } from '../filters/http-exception/http-exception.filter';
 
 // will get applied all routes on putting here
 // @UseGuards(AuthGuard)
-@Controller('task')
+@Controller('task') //method level
 export class TaskController {
   constructor(private readonly taskService: TaskService) {}
 
@@ -38,13 +39,15 @@ export class TaskController {
   //instead of parseint pipe we can use our own custom pipe to validate the id is positive integer or not
 
   @Put(':id') // PUT /task/1  body: { title?, description?, done? }
+  @UseFilters(HttpExceptionFilter) // route-scoped: only this handler's exceptions go through our custom filter
   update(@Param('id', ParsePositiveIntPipe) id: number, @Body() dto: UpdateTaskDto): Task {
     return this.taskService.update(id, dto);
   }
 
    @Delete(':id') // DELETE /task/1
-  @Roles(Role.Admin) // only admin can delete a task
+  
   @UseGuards(RolesGuard) // AuthGuard already ran at controller level, sets req.user
+  @Roles(Role.Admin) // only admin can delete a task
   remove(@Param('id', ParsePositiveIntPipe) id: number): Task {
     return this.taskService.remove(id);
   }
