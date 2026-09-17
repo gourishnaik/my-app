@@ -1,0 +1,156 @@
+ADVANTAGES OF PROMISES / async-await IN THIS APP
+======================================================================
+
+theory/33 explained WHAT a Promise is and WHY it exists at all
+(JavaScript is single-threaded, so a blocking wait would freeze the
+whole server). This file lists the concrete WINS you get from using
+Promises + async/await specifically, versus the alternatives — plain
+blocking calls, or old-style Node callbacks.
+
+
+1. THE SERVER STAYS RESPONSIVE UNDER LOAD (the big one)
+-----------------------------------------------------
+Without Promises, the only way to "wait" for MongoDB to reply would be
+to BLOCK the one JS thread (theory/20-single-thread-vs-multithreading.txt)
+until the network round-trip finishes. That would mean one slow
+database query freezes EVERY other request too — a different user
+hitting GET /task while your findOne(id) is waiting on Mongo would
+just hang until that unrelated query finished.
+
+With Promises, while student.service.ts's findOne(id) is waiting on
+MongoDB, Node is free to handle other requests from other users on
+that same single thread in the meantime. This is the actual mechanism
+that lets Node.js serve thousands of concurrent requests without
+thousands of OS threads.
+
+
+await/async DOES NOT BLOCK THE THREAD — IT PAUSES AT THE FUNCTION LEVEL
+-----------------------------------------------------
+This is the detail that's easy to misread as "await freezes
+everything until it's done." It doesn't. `await` only pauses the ONE
+function it's written inside — it hands control back to Node's event
+loop immediately, instead of holding the thread hostage.
+
+    async findOne(id: string): Promise<StudentDocument> {
+      const student = await this.studentModel.findById(id).exec();
+      // execution of THIS function pauses here...
+      if (!student) { ... }
+      return student;
+    }
+
+The instant that line runs, findOne()'s own progress is suspended —
+but the THREAD keeps running. It goes back to the event loop and picks
+up whatever else is queued: another user's GET /task, another
+incoming HTTP connection, a timer, anything. Nothing about the thread
+itself is idle or blocked.
+
+When MongoDB eventually replies, the paused function is scheduled to
+RESUME exactly where it left off (as a microtask) — not immediately,
+but the next time the event loop has a free moment. That's the whole
+mechanism: one function's local continuation is on hold; the thread,
+and every other function running on it, is not.
+
+This is why theory/20's single-thread fact and async/await don't
+contradict each other. One JS thread + blocking I/O = disaster (every
+request stalls the next). One JS thread + non-blocking Promises = the
+thread juggles many "paused, waiting on I/O" functions at once,
+resuming each only when its own data is actually ready — no other
+function's execution was ever put on hold to make that possible.
+
+
+2. ERRORS PROPAGATE THROUGH ORDINARY try/catch
+-----------------------------------------------------
+    try {
+      return await newStudent.save();
+    } catch (err) {
+      if (err.code === 11000) throw new ConflictException('Email already exists');
+    }
+
+A rejected Promise behaves exactly like a thrown error — the same
+try/catch you already use everywhere else in the language. Compare
+old-style Node callbacks, where every async step required manually
+checking an error argument:
+
+    newStudent.save((err, saved) => {
+      if (err) { /* handle it, or forget to, and the bug is silent */ }
+      ...
+    });
+
+Forgetting that `if (err)` check was a constant source of silently
+swallowed errors in callback-style code. async/await removes the
+option to forget — an unhandled rejection either gets caught by your
+try/catch or bubbles up to Nest's exception filter
+(theory/24-exception-handling.txt), it doesn't just vanish.
+
+
+3. SEQUENTIAL ASYNC STEPS READ TOP-TO-BOTTOM, NOT NESTED
+-----------------------------------------------------
+    const saved = await newStudent.save();
+    saved.name = 'hello';
+    return saved.save();
+
+reads like ordinary synchronous code. The same logic written in old
+callback style:
+
+    newStudent.save((err, saved) => {
+      saved.name = 'hello';
+      saved.save((err2, final) => {
+        // ...
+      });
+    });
+
+nests one level deeper for every additional async step — this is the
+classic "callback hell" async/await was specifically invented to
+eliminate. Three sequential DB operations in callback style is three
+levels of indentation; in async/await it's three lines.
+
+
+4. NEST BUILDS ON THIS DIRECTLY — CONTROLLERS NEED NO EXTRA CODE
+-----------------------------------------------------
+    create(@Body() dto: CreateStudentDto) {
+      return this.studentService.create(dto);
+    }
+
+student.controller.ts's methods aren't even marked async themselves.
+Nest awaits whatever a controller method returns before writing the
+HTTP response — a plain value or a Promise are both handled the exact
+same way internally. You get correct request/response timing without
+writing any Promise-handling code in the controller layer at all.
+
+
+5. COMPOSABLE — INDEPENDENT ASYNC WORK CAN RUN IN PARALLEL
+-----------------------------------------------------
+Not used in this app yet, but available whenever two DB calls don't
+depend on each other:
+
+    const [students, tasks] = await Promise.all([
+      this.studentModel.find().exec(),
+      this.taskModel.find().exec(),
+    ]);
+
+Both queries fire at the same time and Promise.all waits for BOTH to
+finish — roughly HALF the total wait time versus:
+
+    const students = await this.studentModel.find().exec(); // waits fully
+    const tasks = await this.taskModel.find().exec();       // THEN starts
+                                                              // the second one
+
+This kind of "run these independent things at once" composition has
+no clean equivalent in blocking/synchronous code at all.
+
+
+RULE OF THUMB
+--------------
+Promises let ONE slow operation (a DB call, an external API request)
+wait without freezing every other request the server is handling.
+async/await lets you WRITE that waiting code in plain top-to-bottom
+style instead of nested callbacks. Errors flow through the same
+try/catch you already use for everything else — nothing new to learn
+there. And when steps genuinely don't depend on each other,
+Promise.all lets you run them concurrently instead of one after
+another, cutting real wait time.
+
+See also: theory/33-async-await-promises.txt,
+theory/32-injecting-mongoose-models.txt,
+theory/20-single-thread-vs-multithreading.txt,
+theory/24-exception-handling.txt

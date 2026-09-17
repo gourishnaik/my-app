@@ -1,5 +1,5 @@
 import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
+import { ConfigModule, ConfigService } from '@nestjs/config';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { EmployeeModule } from './employee/employee.module';
@@ -9,6 +9,8 @@ import { TaskModule } from './task/task.module';
 import { LoggeerMiddleware } from './middleware/loggeer/loggeer.middleware';
 import { DatabaseService } from './database/database.service';
 import { DatabaseController } from './database/database.controller';
+import { MongooseModule } from '@nestjs/mongoose';
+import { StudentModule } from './student/student.module';
 
 @Module({
   imports: [
@@ -17,6 +19,13 @@ import { DatabaseController } from './database/database.controller';
     CategoryModule,
     UserModule,
     TaskModule,
+    MongooseModule.forRootAsync({ // async form — lets us build the options object from an injected provider instead of a static value
+      inject: [ConfigService], // ConfigService instance is resolved via DI and handed to useFactory below
+      useFactory: (configService: ConfigService) => ({ // Nest calls this once at boot with the injected service, and forRoot()s the returned object
+        uri: configService.getOrThrow<string>('MONGODB_URI'), // typed string, not string|undefined; throws at boot if the env var is missing instead of connecting to undefined
+      }),
+    }),
+    StudentModule
   ],
   controllers: [AppController, DatabaseController],
   providers: [AppService, DatabaseService],
