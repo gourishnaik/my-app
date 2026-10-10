@@ -44,8 +44,12 @@ export class StudentService {
         return updatedStudent;
     }
 
-    
-
-    
+    async remove(id: string): Promise<StudentDocument> { // Promise — findByIdAndDelete is also a DB round-trip
+        const deletedStudent = await this.studentModel.findByIdAndDelete(id).exec(); // finds by _id and removes it in one atomic DB operation, returning the doc as it was before deletion
+        if (!deletedStudent) {
+            throw new NotFoundException(`Student ${id} not found`); // no document matched that _id, nothing was deleted
+        }
+        return deletedStudent;
+    }
 }
 

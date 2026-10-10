@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Post, Put } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Put } from '@nestjs/common';
 import { StudentService } from './student.service';
 import { CreateStudentDto } from './dto/create-student.dto';
 import { UpdateStudentDto } from './dto/update-student.dto';
@@ -30,5 +30,10 @@ export class StudentController {
   @Patch('updatestudent/:id') // PATCH /student/updatestudent/<mongo _id>  body: { name?, age?, email?, course? } — same handler, more semantically correct verb for a partial update
   patch(@Param('id') id: string, @Body() dto: UpdateStudentDto) {
     return this.studentService.update(id, dto);
+  }
+
+  @Delete('deletestudent/:id') // DELETE /student/deletestudent/<mongo _id>
+  remove(@Param('id') id: string) {
+    return this.studentService.remove(id);
   }
 }

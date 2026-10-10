@@ -11,6 +11,8 @@ import { DatabaseService } from './database/database.service';
 import { DatabaseController } from './database/database.controller';
 import { MongooseModule } from '@nestjs/mongoose';
 import { StudentModule } from './student/student.module';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { StudentPgModule } from './student-pg/student-pg.module';
 
 @Module({
   imports: [
@@ -25,7 +27,18 @@ import { StudentModule } from './student/student.module';
         uri: configService.getOrThrow<string>('MONGODB_URI'), // typed string, not string|undefined; throws at boot if the env var is missing instead of connecting to undefined
       }),
     }),
-    StudentModule
+    StudentModule,
+    TypeOrmModule.forRootAsync({ // second, separate DB connection — Postgres sits alongside Mongo
+      inject: [ConfigService],
+      useFactory: (configService: ConfigService) => ({
+        type: 'postgres',
+        url: configService.getOrThrow<string>('DATABASE_URL'), // Supabase connection string from .env
+        ssl: { rejectUnauthorized: false }, // Supabase requires SSL
+        autoLoadEntities: true, // auto-registers every entity passed to any forFeature() call
+        synchronize: true, // DEV ONLY — auto-creates/alters tables from entities; use migrations in production
+      }),
+    }),
+    StudentPgModule,
   ],
   controllers: [AppController, DatabaseController],
   providers: [AppService, DatabaseService],
